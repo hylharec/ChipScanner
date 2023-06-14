@@ -34,6 +34,7 @@ import time
 
 # Third-party modules
 import serial
+from serial import SerialException
 
 
 class Axes(Enum):
@@ -112,7 +113,7 @@ class SMCCorvusXYZ():
                  'timeout':  self.timeout}
         try:
             self.ser = serial.Serial(**kwargs)
-        except serial.SerialException:
+        except:
             print(f"Error: Could not open serial port: {self.port}")
 
         print(f"Debug: Serial port is open: {self.port}")
@@ -120,7 +121,7 @@ class SMCCorvusXYZ():
     def close_instrument(self):
         try:
             self.ser.close()
-        except serial.SerialException:
+        except:
             pass
 
     def __del__(self):
@@ -576,8 +577,9 @@ class SMCCorvusXYZ():
         self.write(f"{axis} getpitch")
         result = self.read()
 
-        print(f"Debug: Get pitch: {result}")
+        print(f"Debug: Get pitch on axis {axis}: {result}")
         return result
 
     def setpitch(self, value: float, axis: Axes):
         self.write(f"{value} {axis} setpitch")
+
