@@ -37,8 +37,8 @@ for col in range(W):
         lut[row, col] = a * b
 
 # Uncomment the following lines to show a heatmap of the LUT.
-#plt.imshow(lut, cmap='hot', interpolation='nearest')
-#plt.show()
+plt.imshow(lut, cmap='hot', interpolation='nearest')
+plt.show()
 
 # Save generated lookup table in textfile as flattened array
 np.savetxt(lut_file_name, lut.reshape((W * H)))

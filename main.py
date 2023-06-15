@@ -1,17 +1,21 @@
-import numpy as np
-import cv2
-from pycromanager import Core
-from time import sleep
-
 import ChipScanner
-import CorvusDriver
-
-# Using PylabSAS
-#from PyLabSAS.instruments.motion_controller.smc_corvus import SMCCorvusXYZ
 
 #scanner = ChipScanner.ChipScanner(2899, 2899, 50, 50, 50, [640, 512], 15)
-scanner = ChipScanner.ChipScanner(3856, 3643, 60, 60, 50, [640, 512], 15)
+
+
+scanner = ChipScanner.ChipScanner(
+    x_end_um=3856,
+    y_end_um=3643,
+    margins_um=(100, 100),
+    coverage_overlap=0.3,
+    lens=5,
+    camera_res=[640, 512],
+    pixel_pitch_um=15.0,
+    cam2motor_angle=0.020
+)
 scanner.scan(40, 30, 30)
+
+
 """scanner.xyz_stage.move_xyz_abs(0, 0, 0)
 scanner.find_best_focus(
     z_step_size_um=4,

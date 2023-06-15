@@ -69,10 +69,6 @@ class Status(Enum):
 
 
 class SMCCorvusXYZ():
-    """
-    Please check the correspondent .md file for further details.
-    """
-
     def __init__(self, port=None, baud_rate=None, bytesize=None, stopbits=None, parity=None, timeout=None, accel: int = 1000, velocity: int = 800):
 
         self.ser = None
