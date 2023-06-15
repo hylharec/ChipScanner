@@ -2,6 +2,7 @@ import numpy as np
 from pycromanager import Core
 import cv2
 from time import sleep
+import yaml
 
 import CorvusDriver
 import ImageMerger
@@ -9,43 +10,54 @@ import ImageMerger
 class ChipScanner:
     def __init__(
         self,
-        x_end_um,
-        y_end_um,
-        margins_um: tuple = (0, 0),
-        coverage_overlap: float = 0.3,
-        lens: int = 5,
-        camera_res: list = [640, 512], # [W, H]
-        pixel_pitch_um: float = 15.0,
-        cam2motor_angle: float = 0.020
+        camera_params_yaml_filename: str = "camera_parameters.yml"
     ):
         """
-        x_end_um/y_end_um: (int) coordinates where the end corner of chip is in the middle of the camera
-        margins_um: (tuple of int) margins around the chip to include correcly it's edges in the final picture
-        coverage_overlap: (float) percentage [0.0; 1.0[ of overlap between each individual picture (does not take elliptic mask into account)
-        lens: (int) microscope magnification (x5, x20 or x50)
-        camera_res: ([int, int]) resolution of picture snapped through MicroManager
-        pixel_pitch: (float) pixel size in um (get from camera datasheet)
-        cam2motor_angle: (float) rotational misalignment between camera and XY stage (in rad)
+        Args:
+            - camera_params_yaml_filename: (str) Name of YAML file where parameters are saved
         """
-        # To match with microscope physical parameters
-        self.camera_res = list(camera_res)
-        self.pixel_pitch = pixel_pitch_um # um
-        self.lens = lens # magnification
-        self.IMG_UM_WIDTH = pixel_pitch_um * camera_res[0] / float(lens)
-        self.IMG_UM_HEIGHT = pixel_pitch_um * camera_res[1] / float(lens)
-        self.PXL_PER_UM = float(lens) / pixel_pitch_um
 
-        self.cam2motor_angle = cam2motor_angle
+        with open(camera_params_yaml_filename, mode="r", encoding="utf-8") as f:
+            yaml_dump: dict = yaml.safe_dump(f)
+
+            exp_key = "Experiment > "
+            self.X_END =            int(yaml_dump.get(exp_key + "x_end_um", 0))
+            self.Y_END =            int(yaml_dump.get(exp_key + "y_end_um", 0))
+            self.margins_um =       int(yaml_dump.get(exp_key + "x_margin_um", 0)), int(yaml_dump.get(exp_key + "y_margin_um", 0))
+            self.coverage_overlap = float(yaml_dump.get(exp_key + "coverage_overlap", 0.0))
+            self.lens =             int(yaml_dump.get(exp_key + "lens", 5))
+            self.pixel_pitch =      float(yaml_dump.get(exp_key + "pixel_pitch_um", 15.0))
+            self.cam2motor_angle =  float(yaml_dump.get(exp_key + "cam2motor_angle", 0.0))
+
+            input_key = "Input > "
+            self.camera_res = [
+                int(yaml_dump.get(input_key + "W", 640)),
+                int(yaml_dump.get(input_key + "H", 512)),
+            ]
+            self._INPUT_BIT_DEPTH = np.power(2.0, int(yaml_dump.get(input_key + "input_bit_depth", 14)))
+            self.BIT_DEPTH =        np.power(2.0, int(yaml_dump.get(input_key + "cast_bit_depth", 16)))
+            self._image_dtype =     getattr(np, yaml_dump.get(input_key + "cast_dtype", "uint16"))
+
+            autofocus_key = "Autofocus > "
+            self.enable_autof =           bool(yaml_dump.get(autofocus_key + "enable", True))
+            self.autof_z_step_size_um =   float(yaml_dump.get(autofocus_key + "z_step_size_um", 0.0))
+            self.autof_max_tries =        int(yaml_dump.get(autofocus_key + "max_tries", 0))
+            self.autof_min_step_size =    float(yaml_dump.get(autofocus_key + "min_step_size", 0.0))
+            self.autof_max_abs_z_um =     float(yaml_dump.get(autofocus_key + "max_abs_z_um", 0.0))
+
+            print(f"DEBUG: DOES YAML READ WORK ? autof_max_tries = {self.autof_max_tries}")
+            # TODO: delete when tested
+
+        # To match with microscope physical parameters
+        self.IMG_UM_WIDTH =     self.pixel_pitch * self.camera_res[0] / float(self.lens)
+        self.IMG_UM_HEIGHT =    self.pixel_pitch * self.camera_res[1] / float(self.lens)
+        self.PXL_PER_UM =       float(self.lens) / self.pixel_pitch
 
         # Determines the number of pictures to take depending on the area of the chip to cover
-        self.X_END = x_end_um
-        self.Y_END = y_end_um
-        self.coverage_overlap = coverage_overlap
-        self.margins_um = margins_um
-        margin_x_um, margin_y_um = margins_um
+        margin_x_um, margin_y_um = self.margins_um
 
-        self.X_NUM = (self.X_END + margin_x_um * 2.0) / (self.IMG_UM_WIDTH * (1.0 - coverage_overlap)) + 1
-        self.Y_NUM = (self.Y_END + margin_y_um * 2.0) / (self.IMG_UM_HEIGHT * (1.0 - coverage_overlap)) + 1
+        self.X_NUM = (self.X_END + margin_x_um * 2.0) / (self.IMG_UM_WIDTH * (1.0 - self.coverage_overlap)) + 1
+        self.Y_NUM = (self.Y_END + margin_y_um * 2.0) / (self.IMG_UM_HEIGHT * (1.0 - self.coverage_overlap)) + 1
 
         # Generate scan (x, y) tuples
         self.positions = self._snakescan(
@@ -63,24 +75,7 @@ class ChipScanner:
         self.core = Core()
         self.core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "Off")
 
-        # Set image grayscale format
-        self._pixel_shape = 1 # 4 -> RGBA, 1 -> grayscale
-        self._INPUT_BIT_DEPTH = 16384
-        self.BIT_DEPTH = None
-        self._image_dtype = None
-        if np.log2(self._INPUT_BIT_DEPTH) > 32:
-            self._image_dtype = np.uint64
-            self.BIT_DEPTH = np.power(2, 64)
-        elif np.log2(self._INPUT_BIT_DEPTH) > 16:
-            self._image_dtype = np.uint32
-            self.BIT_DEPTH = np.power(2, 32)
-        elif np.log2(self._INPUT_BIT_DEPTH) > 8:
-            self._image_dtype = np.uint16
-            self.BIT_DEPTH = np.power(2, 16)
-        else:
-            self._image_dtype = np.uint8
-            self.BIT_DEPTH = np.power(2, 8)
-        # Following attribute is used in picture snap thread function
+        # Following attribute is used when converting input camera picture to a regular data type
         self._INPUT_TO_OUTPUT_BIT_DEPTH_MULT = int(np.power(2.0, (np.log2(self.BIT_DEPTH) - np.log2(self._INPUT_BIT_DEPTH))))
 
 
@@ -135,10 +130,19 @@ class ChipScanner:
         return positions
 
     def scan(self, ellipse_offset_x: int = 300, ellipse_offset_y: int = 300, blur_strength: int = 50):
+        """
+        Performs the scan to take pictures over a specific area.
+
+        Args:
+            - ellipse_offset_x: (int) Number of padding pixels from edge of image before ellipse starts
+            - ellipse_offset_y: (int) Same for rows of image
+            - blur_strength: (int) Gaussian blur sigma values (higher => more blurry elliptic mask)
+        """
         # ########################################################################
         # Start exploring the chip and taking pictures
         print("Scanning area...")
         stop = 0
+        focus_z = 0.0
         for i in range(len(self.positions)):
             (x, y) = np.round(self.positions[i], 3)
 
@@ -147,11 +151,18 @@ class ChipScanner:
             print(f"({round(x, 2)}, {round(y, 2)}) : \n" + progress * "#" + (50 - progress) * "-")
 
             # Go to position (x, y), in um
-            self.xyz_stage.move_xyz_abs(x, y, 0)
+            self.xyz_stage.move_xyz_abs(x, y, focus_z)
             sleep(0.2)
 
-            focus_z = self.find_best_focus(2.0, 20, 0.25)
-            print(f"Focus z = {focus_z}")
+            # Autofocus if enabled
+            if self.enable_autof:
+                focus_z = self.find_best_focus(
+                    self.autof_z_step_size_um,
+                    self.autof_max_tries,
+                    self.autof_min_step_size,
+                    self.autof_max_abs_z_um,
+                )
+                print(f"Autofocus z = {focus_z}")
 
             # Snap a picture
             pixels = self._get_raw_camera_image()
@@ -199,7 +210,7 @@ class ChipScanner:
 
         print("Done.")
 
-    def find_best_focus(self, z_step_size_um: float, max_tries: int, min_step_size: float):
+    def find_best_focus(self, z_step_size_um: float, max_tries: int, min_step_size: float, max_abs_z_um: float):
         """
         This method tries to find the Z position that provides the best focus. It also returns the best Z value found.
         It needs to be called after moving to the desired XY position and right before taking the picture.
@@ -220,10 +231,14 @@ class ChipScanner:
         while nb_tries < max_tries:
             nb_tries += 1
 
-            score = self._get_image_focus_score(self._get_raw_camera_image(), current_z)
+            score = self._get_image_focus_score(self._get_raw_camera_image(), x, y, current_z)
             #print(f"Z: {current_z}, Score: {score}, dir: {direction}, step: {z_step_size_um}")
 
-            if last_score is None:
+            if score == -1:
+                # -1 indicates that current image is outside of chip area, cancel autofocus
+                # Only depends on x and y values.
+                return current_z
+            elif last_score is None:
                 best_z = current_z
             else:
                 if score >= last_score: # Stay in same direction to keep improving
@@ -253,10 +268,9 @@ class ChipScanner:
             else:
                 current_z += z_step_size_um
 
-            if current_z < -400:
-                current_z = -400
-            elif current_z > 400:
-                current_z = 400
+            # Prevent from going too far from 0
+            if np.abs(current_z) > max_abs_z_um:
+                current_z = np.sign(current_z) * max_abs_z_um
 
             # Go to next z
             self.xyz_stage.move_xyz_abs(x, y, current_z)
@@ -267,11 +281,16 @@ class ChipScanner:
         self.xyz_stage.move_xyz_abs(x, y, best_z)
         return best_z
 
-    def _get_image_focus_score(self, image, z):
+    def _get_image_focus_score(self, image, x, y, z):
         """
         Method used exclusiely by the autofocus method to rate an image focus.
         Input image is the same format as returned by self._get_raw_camera_image().
         """
+
+        # x and y are the values returned from the motor ctlr. They need to be corrected to use them to locate current
+        # image on chip surface. The following coordinates are considered to correspond to the middle of the image
+        x_coord, y_coord = self.coords_motor2cam(x, y)
+
         # Image snapped from photoemission camera is grayscale 14bit
         # Apply Gaussian blur (params taken from Opencv Autofocus code)
         image = cv2.GaussianBlur(image, (7, 7), sigmaX=1.5, sigmaY=1.5)
@@ -284,6 +303,24 @@ class ChipScanner:
         #cv2.imwrite(f"focus/image_{z}.png", image)
 
         edges: np.array = cv2.Canny(image, threshold1=0, threshold2=30, apertureSize=3)
+
+        W, H = self.camera_res[0], self.camera_res[1]
+
+        # Cancel autofocus if whole picture is outside of chip area
+        if y_coord + (H//2) / self.PXL_PER_UM < 0 or y_coord - (H//2) / self.PXL_PER_UM > self.Y_END:
+            return -1
+        if x_coord + (W//2) / self.PXL_PER_UM < 0 or x_coord - (W//2) / self.PXL_PER_UM > self.X_END:
+            return -1
+
+        # Ignore parts that are outside of chip surface to prevent focus on edges instead of substrate.
+        for row in edges:
+            row[y_coord + (row - H//2) / self.PXL_PER_UM > self.Y_END] = 0
+            row[y_coord + (row - H//2) / self.PXL_PER_UM < 0] = 0
+        edges = np.transpose(edges)
+        for col in edges:
+            col[x_coord + (col - W//2) / self.PXL_PER_UM > self.X_END] = 0
+            col[x_coord + (col - W//2) / self.PXL_PER_UM < 0] = 0
+        edges = np.transpose(edges)
 
         #cv2.imshow(f"focus/edge_{z}.png", edges)
         #cv2.waitKey(10)
@@ -302,3 +339,15 @@ class ChipScanner:
         ).astype(self._image_dtype)
 
         return pixels
+
+    def coords_motor2cam(self, x, y):
+        theta = self.cam2motor_angle
+        x2 = np.cos(theta) * x + np.sin(theta) * y
+        y2 = - np.sin(theta) * x + np.cos(theta) * y
+        return x2, y2
+
+    def coords_cam2motor(self, x, y):
+        theta = self.cam2motor_angle
+        x2 = np.cos(theta) * x - np.sin(theta) * y
+        y2 = np.sin(theta) * x + np.cos(theta) * y
+        return x2, y2

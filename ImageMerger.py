@@ -78,8 +78,8 @@ class ImageMerger:
             img_W, img_H = self.images_res[0], self.images_res[1]
 
             # Blank image used as background.
-            np_background = np.zeros((full_img_H + 100, full_img_W + 100), dtype=self.images_dtype)
-            bg_weights = np.zeros((full_img_H + 100, full_img_W + 100), dtype=self.images_dtype)
+            full_image = np.zeros((full_img_H + 100, full_img_W + 100), dtype=self.images_dtype)
+            weight_map = np.zeros((full_img_H + 100, full_img_W + 100), dtype=self.images_dtype)
             weight = np.zeros((full_img_H, full_img_W), dtype=self.images_dtype)
 
             offset_x, offset_y = offset
@@ -129,24 +129,24 @@ class ImageMerger:
                 ) >> 8 # (// 255 because the weights are represented as uint8 (1.0 <=> 255))
                 masked_image = masked_image.astype(self.images_dtype)
 
-                np_background[y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += masked_image
-                bg_weights[   y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += weight[1:img_H-1, 1:img_W-1]
+                full_image[y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += masked_image
+                weight_map[   y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += weight[1:img_H-1, 1:img_W-1]
 
                 #index += 1
                 if index > 100:
                     break
 
             # Cells == 0 => no pixel was added, weight can be set to 1.0 without consequence (to prevent division by zero on next step)
-            bg_weights[bg_weights == 0] = 255
+            weight_map[weight_map == 0] = 255
 
             # Once all images were merged, apply a per pixel intensity correction depending on where the sum of weights
             # of overlaping pixels does not add up to 1.
             # For exemple, if one pixel is on the overlap of 3 images with weights of respectively 0.1, 0.4 and 0.2,
             # the sum only adds up to 0.7. Thus for the averaging process to be correct, the intensity needs to be
             # corrected to raise the sum from 0.7 to 1.0 => Thus pixel value divided by 0.7.
-            np_background = np.divide(
-                np_background.astype(np.uint64) << 8, # (* 255 because the weights are represented as uint8 (1.0 <=> 255))
-                bg_weights.astype(np.uint64)
+            full_image = np.divide(
+                full_image.astype(np.uint64) << 8, # (* 255 because the weights are represented as uint8 (1.0 <=> 255))
+                weight_map.astype(np.uint64)
             ).astype(self.images_dtype)
 
             # Save the resulting image.
@@ -160,9 +160,9 @@ class ImageMerger:
 
             #np_background = cv2.equalizeHist(np_background)
 
-            print(np_background.shape)
-            print(np_background.dtype)
-            cv2.imwrite(path_result, np_background)
+            print(full_image.shape)
+            print(full_image.dtype)
+            cv2.imwrite(path_result, full_image)
 
             # Clean individual images after result was saved if specified
             if clean_after:

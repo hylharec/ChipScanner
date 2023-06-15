@@ -1,0 +1,21 @@
+Input:
+    W: 640                      # (int) resolution of pictures snapped through MicroManager
+    H: 512                      #
+    input_bit_depth: 14         # (int) Bit depth of pictures snapped through Micromanager
+    cast_bit_depth: 16          # (int) Target bit depth to cast input pictures to (should be 8, 16 or 32)
+    cast_dtype: "uint16"        # (str) Name of Numpy dtype to cast input pictures to
+Experiment:
+    x_end_um: 2000              # (int) Coordinates where the end corner of chip is in the middle of the camera
+    y_end_um: 2000              #
+    x_margin_um: 200            # (int) Margins around the chip to include correcly it's edges in the final picture
+    y_margin_um: 200            #
+    coverage_overlap: 0.3       # (float) Percentage of overlap to expect between consecutive pictures [0.0, 1.0[
+    lens: 50                    # (5, 20 or 50) Magnification used
+    pixel_pitch_um: 15.0        # (float) See camera datasheet
+    cam2motor_angle: 0.02       # (float) (rad) Rotational misalignment between camera and XY stage
+Autofocus:
+    enable: True
+    z_step_size_um: 2.0
+    max_tries: 20
+    min_step_size: 0.25
+    max_abs_z_um: 20.0

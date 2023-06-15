@@ -3,17 +3,12 @@ import ChipScanner
 #scanner = ChipScanner.ChipScanner(2899, 2899, 50, 50, 50, [640, 512], 15)
 
 
-scanner = ChipScanner.ChipScanner(
-    x_end_um=3856,
-    y_end_um=3643,
-    margins_um=(100, 100),
-    coverage_overlap=0.3,
-    lens=5,
-    camera_res=[640, 512],
-    pixel_pitch_um=15.0,
-    cam2motor_angle=0.020
+scanner = ChipScanner.ChipScanner("camera_parameters.yml")
+scanner.scan(
+    ellipse_offset_x=40,
+    ellipse_offset_y=30,
+    blur_strength=30,
 )
-scanner.scan(40, 30, 30)
 
 
 """scanner.xyz_stage.move_xyz_abs(0, 0, 0)
