@@ -1,21 +1,48 @@
 Input:
     W: 640                      # (int) resolution of pictures snapped through MicroManager
     H: 512                      #
+
     input_bit_depth: 14         # (int) Bit depth of pictures snapped through Micromanager
     cast_bit_depth: 16          # (int) Target bit depth to cast input pictures to (should be 8, 16 or 32)
     cast_dtype: "uint16"        # (str) Name of Numpy dtype to cast input pictures to
+
+# Experiment preparation:
+# Zero should be set so that the middle of the image is the corner of the chip where all
+# locations of the chip are positive x and y values.
+#  __________________  --> +x axis
+# |                 |
+# |                 |
+# |      ___________| <-- corner on middle of picture
+# |      |          |     (with a small margin inside chip area to prevent autofocus on edge)
+# |      |   chip   |
+# |      |          |
+# |_________________|
+#
+# |
+# v +y axis
+#
+# The end x and y values should correspond to the middle of the opposite corner.
+#
 Experiment:
     x_end_um: 2000              # (int) Coordinates where the end corner of chip is in the middle of the camera
     y_end_um: 2000              #
+
     x_margin_um: 200            # (int) Margins around the chip to include correcly it's edges in the final picture
     y_margin_um: 200            #
+
     coverage_overlap: 0.3       # (float) Percentage of overlap to expect between consecutive pictures [0.0, 1.0[
     lens: 50                    # (5, 20 or 50) Magnification used
     pixel_pitch_um: 15.0        # (float) See camera datasheet
     cam2motor_angle: 0.02       # (float) (rad) Rotational misalignment between camera and XY stage
+
+# Autofocus params depend on the lens used.
+# Usually:
+# x50 -> good focus z ranges between -/+ 10 um
+# x20 -> good focus z ranges between -/+ 20 um
+# Initial step size should not be too big for good results.
 Autofocus:
     enable: True
-    z_step_size_um: 2.0
-    max_tries: 20
-    min_step_size: 0.25
-    max_abs_z_um: 20.0
+    z_step_size_um: 2.0         # (float) Starting step size of autofocus
+    max_tries: 20               # (int) Prevents autofocus from running forever if it does not converge
+    min_step_size: 0.25         # (float) After each direction change the step size is /2 until it is < this value
+    max_abs_z_um: 20.0          # (float) z values are clamped within this amplitude from 0 for safety
