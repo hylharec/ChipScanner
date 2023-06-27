@@ -466,7 +466,7 @@ class SMCCorvusXYZ():
         y_axis = max(self.axis_range[0], min(self.axis_range[1], y_axis))
         z_axis = max(self.axis_range[0], min(self.axis_range[1], z_axis))
 
-        x_axis = -x_axis # Negative so it can go from left to right by default.
+        #x_axis = -x_axis # Negative so it can go from left to right by default.
 
         self.write(f'{x_axis} {y_axis} {z_axis} m')
 

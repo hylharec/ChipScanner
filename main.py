@@ -1,46 +1,37 @@
+import yaml
 import ChipScanner
+import ImageMerger
 
-#scanner = ChipScanner.ChipScanner(2899, 2899, 50, 50, 50, [640, 512], 15)
 
+# Load "only_merge" parameter from yaml file
+camera_params_yaml_filename = "camera_parameters.yml"
+with open(camera_params_yaml_filename, mode="r", encoding="utf-8") as f:
+    yaml_dump: dict = yaml.safe_load(f)
+    only_merge = bool(yaml_dump["Experiment"].get("only_merge", True))
 
-scanner = ChipScanner.ChipScanner("camera_parameters.yml")
-scanner.scan(
-    ellipse_offset_x=40,
-    ellipse_offset_y=30,
-    blur_strength=30,
+# ==================================== SCANNING PROCESS =================================
+if not only_merge:
+    scanner = ChipScanner.ChipScanner(camera_params_yaml_filename)
+    scanner.scan()
+
+# ==================================== MERGING PROCESS =================================
+merger = ImageMerger.ImageMerger(
+    img_path_base="img_to_merge",
+    camera_params_yaml_filename=camera_params_yaml_filename,
+    ignored_filenames=[
+        "result.png",
+        "result_np.png",
+        "result1.png",
+        "result2.png",
+        "result3.png",
+        "result4.png",
+        "result_calibrated.png"
+    ]
 )
-
-
-"""scanner.xyz_stage.move_xyz_abs(0, 0, 0)
-scanner.find_best_focus(
-    z_step_size_um=4,
-    max_tries=40,
-    min_step_size=0.25
-)"""
-
-"""corvus = CorvusDriver.SMCCorvusXYZ(
-    port="COM9",
-    baud_rate=57600,
-    bytesize="EIGHTBITS",
-    stopbits="STOPBITS_ONE",
-    parity="PARITY_NONE",
-    timeout=1,
-    accel=1,
-    velocity=1
+merger.load()
+merger.merge(
+    offset=[40, 30],
+    blur_level=30,
+    clean_after=False
 )
-
-corvus.move_xyz_abs(0.0, 0.0, 0.0) # go to zero
-
-positions = [
-    (-1, 0, 0),
-    (-1, 1, 0),
-    (0, 1, 0),
-    (0, 0, 0)
-]
-
-for (x, y, z) in positions:
-    corvus.move_xyz_abs(x, y, z)
-    sleep(1.0)
-
-input("End of program, enter to exit...")"""
-
+# =======================================================================================
