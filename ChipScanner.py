@@ -5,12 +5,16 @@ from time import sleep
 import yaml
 
 import CorvusDriver
-import ImageMerger
 
 class ChipScanner:
+    """
+    Class that connects to MicroManager and SMC Corvus motors to scann a chip area and save pictures to disk.
+    """
     def __init__(
         self,
-        camera_params_yaml_filename: str = "camera_parameters.yml"
+        camera_params_yaml_filename: str = "camera_parameters.yml",
+        override_x_end_um: int = None, # None => do not override
+        override_y_end_um: int = None, # None
     ):
         """
         Args:
@@ -45,6 +49,13 @@ class ChipScanner:
             self.autof_min_step_size =    float(yaml_dump[autofocus_key].get("min_step_size", 0.0))
             self.autof_max_abs_z_um =     float(yaml_dump[autofocus_key].get("max_abs_z_um", 0.0))
 
+        # Optionnaly override end position of chip area with __init__ argument
+        # (Used when Setup class is used to manually set end position at runtime)
+        if override_x_end_um is not None:
+            self.X_END = override_x_end_um
+        if override_y_end_um is not None:
+            self.Y_END = override_y_end_um
+
         # To match with microscope physical parameters
         self.IMG_UM_WIDTH =     self.pixel_pitch * self.camera_res[0] / float(self.lens)
         self.IMG_UM_HEIGHT =    self.pixel_pitch * self.camera_res[1] / float(self.lens)
@@ -74,10 +85,6 @@ class ChipScanner:
 
         # Following attribute is used when converting input camera picture to a regular data type
         self._INPUT_TO_OUTPUT_BIT_DEPTH_MULT = int(np.power(2.0, (np.log2(self.BIT_DEPTH) - np.log2(self._INPUT_BIT_DEPTH))))
-
-        # ########################################################################
-        # Config a bunch of camera parameters
-        print("Configuring camera...")
 
         # ########################################################################
         # Initialize connection with xyz controller
@@ -119,17 +126,14 @@ class ChipScanner:
         return positions
 
     def scan(self):
+        """
+        Performs the scan to take pictures over a specific area.
+        Saves the pictures in a subfolder.
+        """
+
         # Disabling joystick right before scan
         self.xyz_stage.set_joystick(False)
 
-        """
-        Performs the scan to take pictures over a specific area.
-
-        Args:
-            - ellipse_offset_x: (int) Number of padding pixels from edge of image before ellipse starts
-            - ellipse_offset_y: (int) Same for rows of image
-            - blur_strength: (int) Gaussian blur sigma values (higher => more blurry elliptic mask)
-        """
         # ########################################################################
         # Start exploring the chip and taking pictures
         print("Scanning area...")

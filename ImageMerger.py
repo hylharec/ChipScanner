@@ -5,6 +5,9 @@ import cv2
 import numpy as np
 
 class ImageMerger:
+    """
+    Class to merge a set of pictures taken from the surface of a chip with the ChipScanner class.
+    """
     def __init__(
         self,
         img_path_base = "img_to_merge",

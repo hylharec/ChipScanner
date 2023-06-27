@@ -35,6 +35,7 @@ Experiment:
     pixel_pitch_um: 15.0        # (float) See camera datasheet
     cam2motor_angle: 0.01       # (float) (rad) Rotational misalignment between camera and XY stage
     only_merge: True            # (bool) Set to True to prevent new pictures to be taken and directly jump to the merging process when launching main.py
+    skip_setup: True            # (bool) Set to True to prevent manual runtime exposure, zero pos and end pos setting sequence in main.py
 
 # Autofocus params depend on the lens used.
 # Usually:
@@ -46,4 +47,4 @@ Autofocus:
     z_step_size_um: 2.0         # (float) Starting step size of autofocus
     max_tries: 20               # (int) Prevents autofocus from running forever if it does not converge
     min_step_size: 0.25         # (float) After each direction change the step size is /2 until it is < this value
-    max_abs_z_um: 80.0          # (float) z values are clamped within this amplitude from 0 for safety
+    max_abs_z_um: 80.0          # (float) z values are clamped within this amplitude from 0 for safety (WARNING: will prevent good autofocus if too small)
