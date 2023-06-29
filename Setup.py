@@ -52,11 +52,11 @@ class Setup:
         self.start()
 
         # Disable auto-exposure on a spot of the chip were exposure is acceptable
-        self.core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "On")
+        self._core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "On")
         xyz_stage.set_joystick(True)
         print("Setting exposure: Please use the joystick to go to an area of the chip were the autoexposure will be set constant.")
         input("\nThen press enter to continue...")
-        self.core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "Off")
+        self._core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "Off")
 
         # Set zero of XY stage on first corner of chip
         print("Go to top left hand corner of chip with regards to the image viewed with the program.")
@@ -127,7 +127,7 @@ class Setup:
                     pixels = cv2.line(pixels, (W//2 - 30, H//2), (W//2 + 30, H//2), (255, 0, 0), 5)
                     pixels = cv2.line(pixels, (W//2, H//2 - 30), (W//2, H//2 + 30), (255, 0, 0), 5)
 
-                    cv2.imshow("", pixels)
+                    cv2.imshow("cv_win", pixels)
                     cv2.waitKey(200)
 
                 except Exception:

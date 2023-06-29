@@ -16,6 +16,7 @@ if not only_merge:
     if not skip_setup:
         setuper = Setup.Setup()
         x_end, y_end = setuper.setup()
+        print(f"Setup X_END, Y_END : {x_end}, {y_end}")
 # ==================================== SCANNING PROCESS =================================
     # x_end and y_end only override yaml file if not skipping setup
     scanner = ChipScanner.ChipScanner(camera_params_yaml_filename, x_end, y_end)

@@ -4,8 +4,8 @@ from matplotlib import pyplot as plt
 
 # ========================================= UNCOMMENT THE RIGHT LENS ====================================
 #lens = "5"
-lens = "20"
-#lens = "50"
+#lens = "20"
+lens = "50"
 # =======================================================================================================
 
 lut_file_name = f"x{lens}_vignette_lut.txt"

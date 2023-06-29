@@ -471,11 +471,11 @@ class SMCCorvusXYZ():
         self.write(f'{x_axis} {y_axis} {z_axis} m')
 
         # Wait until movement finishes
-        print("Info: Moving...")
+        #print("Info: Moving...")
 
         self.wait_move_finish(x_axis, y_axis, z_axis)
 
-        print("Debug: Ready")
+        #print("Debug: Ready")
 
     def wait_move_finish(self, x_axis: float, y_axis: float, z_axis: float):
         sleep_time = self.timeout/2
@@ -486,7 +486,7 @@ class SMCCorvusXYZ():
         while temp_status not in (Status.READY.value, Status.JOYSTICK_ACTIVE.value):
             time.sleep(sleep_time)
             temp_status = self.get_status()
-            print(f"Debug: Status: {temp_status}")
+            #print(f"Debug: Status: {temp_status}")
             sum_sleep_time += sleep_time
             if sum_sleep_time >= timeout:
                 err = self.get_error()

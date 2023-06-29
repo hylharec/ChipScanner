@@ -48,3 +48,6 @@ Autofocus:
     max_tries: 20               # (int) Prevents autofocus from running forever if it does not converge
     min_step_size: 0.25         # (float) After each direction change the step size is /2 until it is < this value
     max_abs_z_um: 80.0          # (float) z values are clamped within this amplitude from 0 for safety (WARNING: will prevent good autofocus if too small)
+    min_rating_threshold: 300   # (int) If the autofocus ends with a rating below this value, it will revert to the z before the start of the autofocus. (0 to disable feature)
+    rough_scan_abs_z_um: 40.0   # (float) At start of autofocus, will take a number of pictures at z levels in this range around the previous focus z to choose the best starting z.
+    rough_scan_nb: 6            # (int) At start of autofocus, number of pictures to take in set range around previous focus z.

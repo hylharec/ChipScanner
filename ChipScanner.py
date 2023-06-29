@@ -48,6 +48,9 @@ class ChipScanner:
             self.autof_max_tries =        int(yaml_dump[autofocus_key].get("max_tries", 0))
             self.autof_min_step_size =    float(yaml_dump[autofocus_key].get("min_step_size", 0.0))
             self.autof_max_abs_z_um =     float(yaml_dump[autofocus_key].get("max_abs_z_um", 0.0))
+            self.min_rating_threshold =   int(yaml_dump[autofocus_key].get("min_rating_threshold", 0))
+            self.rough_scan_abs_z_um =    float(yaml_dump[autofocus_key].get("rough_scan_abs_z_um", 0.0))
+            self.rough_scan_nb =          int(yaml_dump[autofocus_key].get("rough_scan_nb", 0))
 
         # Optionnaly override end position of chip area with __init__ argument
         # (Used when Setup class is used to manually set end position at runtime)
@@ -134,6 +137,11 @@ class ChipScanner:
         # Disabling joystick right before scan
         self.xyz_stage.set_joystick(False)
 
+        # The goal of this dict is to find wich starting z value is the best each time autofocus starts (not always last value)
+        # For exemple, on very uniform areas of the chip, autofocus might be skipped. It is then better to use z values from the
+        # previous line rather than the current one as a starting point for autofocus.
+        last_focus_z_on_same_y = {}
+
         # ########################################################################
         # Start exploring the chip and taking pictures
         print("Scanning area...")
@@ -146,19 +154,35 @@ class ChipScanner:
             progress = int(i * 50.0 / (len(self.positions) - 1)) # progress goes from 0 to 50
             print(f"({round(x, 2)}, {round(y, 2)}) : \n" + progress * "#" + (50 - progress) * "-")
 
-            # Go to position (x, y), in um
-            self.xyz_stage.move_xyz_abs(x, y, focus_z)
-            sleep(0.2)
-
             # Autofocus if enabled
-            if self.enable_autof:
+            if not self.enable_autof:
+                # Simply go to position (x, y), in um, focus_z is constant
+                self.xyz_stage.move_xyz_abs(x, y, focus_z)
+                sleep(0.2)
+            else:
+                # Get z value from which autofocus starts
+                # If not on first line, it is the average of the last value on same y and the previous value on same x
+                if str(y) in last_focus_z_on_same_y:
+                    focus_z = (last_focus_z_on_same_y[str(y)] + focus_z) / 2
+
+                # Move to right xyz position before starting autofocus
+                self.xyz_stage.move_xyz_abs(x, y, focus_z)
+                sleep(0.2)
+
+                # Autofocus
                 focus_z = self.find_best_focus(
                     self.autof_z_step_size_um,
                     self.autof_max_tries,
                     self.autof_min_step_size,
                     self.autof_max_abs_z_um,
+                    self.min_rating_threshold,
+                    self.rough_scan_abs_z_um,
+                    self.rough_scan_nb,
                 )
                 print(f"Autofocus z = {focus_z}")
+
+                # Update this line's last focus z value
+                last_focus_z_on_same_y[str(y)] = focus_z
 
             # Snap a picture
             pixels = self._get_raw_camera_image()
@@ -184,13 +208,25 @@ class ChipScanner:
         # Re-enable joystick before quitting
         self.xyz_stage.set_joystick(False)
 
-    def find_best_focus(self, z_step_size_um: float, max_tries: int, min_step_size: float, max_abs_z_um: float):
+    def find_best_focus(
+        self,
+        z_step_size_um: float,
+        max_tries: int,
+        min_step_size: float,
+        max_abs_z_um: float,
+        min_rating_threshold: int,
+        rough_scan_abs_z_um: float,
+        rough_scan_nb: int,
+    ):
         """
         This method tries to find the Z position that provides the best focus. It also returns the best Z value found.
         It needs to be called after moving to the desired XY position and right before taking the picture.
         Method ends before max number of tries if step size became small enough (converged).
+
+        Look into yaml parameters file for further information on the arguments.
         """
         last_score = None
+        best_score = None
         best_z = None
         nb_tries = 0
 
@@ -201,12 +237,32 @@ class ChipScanner:
         while len(pos) == 0:
             pos = np.round(self.xyz_stage.get_pos(True), 3)
         x, y, current_z = pos[0], pos[1], pos[2]
+        initial_z = current_z
 
+        # Before convergence algorithm starts, do a rough exploration around current z depth
+        best_rough_z = current_z
+        best_rough_score = self._get_image_focus_score(self._get_raw_camera_image(), x, y)
+        for z in range(np.linspace(current_z - rough_scan_abs_z_um, current_z + rough_scan_abs_z_um, rough_scan_nb)):
+            self.xyz_stage.move_xyz_abs(x, y, z)
+            score = self._get_image_focus_score(self._get_raw_camera_image(), x, y)
+
+            if score == -1:
+                best_rough_z = current_z
+                break
+            elif score >= best_rough_score:
+                best_rough_z = z
+                best_rough_score = score
+
+        # Rough exploration yielded
+        current_z = best_rough_z
+        self.xyz_stage.move_xyz_abs(x, y, best_rough_z)
+
+        # Start of convergence algorithm
         while nb_tries < max_tries:
             nb_tries += 1
 
             # Compute the focus rating for the current position
-            score = self._get_image_focus_score(self._get_raw_camera_image(), x, y, current_z)
+            score = self._get_image_focus_score(self._get_raw_camera_image(), x, y)
             #print(f"Z: {current_z}, Score: {score}, dir: {direction}, step: {z_step_size_um}")
 
             # -1 should indicate that microscope is currently not over chip area (irrelevent to focus)
@@ -217,9 +273,11 @@ class ChipScanner:
             # None indicates that this is the first try, no rating to compare to yet
             elif last_score is None:
                 best_z = current_z
+                best_score = score
             else:
                 if score >= last_score: # Stay in same direction to keep improving
                     best_z = current_z
+                    best_score = score
                 else: # Score got worse, invert direction or stop algorithm
                     if direction == "up":
                         direction = "down"
@@ -230,8 +288,11 @@ class ChipScanner:
 
                         # If step size has become too small, solution considered to have been found
                         if z_step_size_um <= min_step_size:
-                            self.xyz_stage.move_xyz_abs(x, y, best_z)
-                            return best_z
+                            # Revert to initial z if best rating below threshold
+                            if best_score < min_rating_threshold:
+                                best_z = initial_z
+                            self.xyz_stage.move_xyz_abs(x, y, initial_z)
+                            return initial_z
                         else:
                             z_step_size_um /= 2
                     else:
@@ -254,10 +315,13 @@ class ChipScanner:
             last_score = score
 
         # Maximum number of tries reached, go to best solution and return best z found.
+        # Revert to initial z if best rating below threshold
+        if best_score < self.min_rating_threshold:
+            best_z = initial_z
         self.xyz_stage.move_xyz_abs(x, y, best_z)
         return best_z
 
-    def _get_image_focus_score(self, image, x, y, z):
+    def _get_image_focus_score(self, image, x, y):
         """
         Method used exclusiely by the autofocus method to rate an image focus.
         Input image is the same format as returned by self._get_raw_camera_image().
@@ -269,18 +333,33 @@ class ChipScanner:
 
         # Image snapped from photoemission camera is grayscale 14bit
 
-        # Find edges (params taken from Opencv Autofocus code)
+        # Apply Gaussian blur kernel
+        kernel_gaussian = np.array([
+            [1, 2, 1],
+            [2, 4, 2],
+            [1, 2, 1],
+        ]) / 16
+        image = cv2.filter2D(image, -1, kernel_gaussian)
 
-        image = image >> 8
-        image = np.uint8(image)
-        image = cv2.equalizeHist(image)
+        # Apply edge detection kernel
+        kernel = np.array([
+            [-1, -1, -1, -1, -1],
+            [-1, -1, -1, -1, -1],
+            [-1, -1, 24, -1, -1],
+            [-1, -1, -1, -1, -1],
+            [-1, -1, -1, -1, -1],
+        ])
+        edges = cv2.filter2D(image, -1, kernel)
+
+        #image = image >> 8
+        #image = np.uint8(image)
+        #image = cv2.equalizeHist(image)
 
         # Apply Gaussian blur (params taken from Opencv Autofocus code)
-        image = cv2.GaussianBlur(image, (7, 7), sigmaX=1.5, sigmaY=1.5)
+        #image = cv2.GaussianBlur(image, (7, 7), sigmaX=1.5, sigmaY=1.5)
 
-        #cv2.imwrite(f"focus/image_{z}.png", image)
-
-        edges: np.array = cv2.Canny(image, threshold1=0, threshold2=20, apertureSize=3)
+        # Find edges (params taken from Opencv Autofocus code)
+        #edges: np.array = cv2.Canny(image, threshold1=0, threshold2=50, apertureSize=3)
 
         W, H = self.camera_res[0], self.camera_res[1]
 
@@ -309,7 +388,7 @@ class ChipScanner:
             edges[high_x_limit:] *= 0
         edges = np.transpose(edges)
 
-        cv2.imshow(f"edges", cv2.addWeighted(image, 0.5, edges, 0.5, 0.0))
+        cv2.imshow(f"edges", cv2.addWeighted(image, 0.3, edges, 0.7, 0.0))
         cv2.waitKey(10)
 
         # Score is defined as average value of edge image
