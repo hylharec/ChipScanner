@@ -224,7 +224,7 @@ class SMCCorvusXYZ():
 
         try:
             result = int(result)
-            print(f"Debug: Status: {Status(result)}")
+            #print(f"Debug: Status: {Status(result)}")
         except ValueError:
             err = self.get_error()
             print(f"Error: get_status(): Unexpected response from the instrument: {err}.")

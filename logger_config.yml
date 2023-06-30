@@ -1,0 +1,29 @@
+version: 1
+disable_existing_loggers: true
+
+filters:
+    infoFilter:
+        (): setup_logging.infoFilter
+formatters:
+  simple:
+    format: '%(asctime)s | %(levelname)s | %(message)s'
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+  info_file_handler:
+    class: logging.handlers.TimedRotatingFileHandler
+    level: INFO
+    formatter: simple
+    filename: info.log
+    when: 'midnight'
+    backupCount: 4
+    #filters: [infoFilter]
+    utc: True
+    encoding: utf8
+root:
+  level: NOTSET
+  handlers: [console, info_file_handler]
+  propagate: yes

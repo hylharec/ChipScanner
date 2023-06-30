@@ -3,6 +3,7 @@ import glob
 import yaml
 import cv2
 import numpy as np
+import logging
 
 class ImageMerger:
     """
@@ -10,7 +11,7 @@ class ImageMerger:
     """
     def __init__(
         self,
-        img_path_base = "img_to_merge",
+        logger: logging.Logger,
         camera_params_yaml_filename: str = "camera_parameters.yml",
         ignored_filenames = [
             "result.png",
@@ -22,10 +23,10 @@ class ImageMerger:
             "result_calibrated.png"
         ]
     ):
-        self.img_path_base = img_path_base
+        self.logger = logger
         self.ignored_filenames = ignored_filenames
 
-        self.images = [] # contains tuples (x, y, image)
+        self.images = [] # contains tuples (x, y, z, image)
         self.images_dtype = None
         self.images_res = None
 
@@ -33,6 +34,7 @@ class ImageMerger:
             yaml_dump: dict = yaml.safe_load(f)
 
             exp_key = "Experiment"
+            self.img_path_base =    yaml_dump[exp_key].get("img_path_base", "img_to_merge")
             self.X_END =            int(yaml_dump[exp_key].get("x_end_um", 0))
             self.Y_END =            int(yaml_dump[exp_key].get("y_end_um", 0))
             self.margins_um =       int(yaml_dump[exp_key].get("x_margin_um", 0)), int(yaml_dump[exp_key].get("y_margin_um", 0))
@@ -43,7 +45,10 @@ class ImageMerger:
         self.pxl_per_um = float(self.lens) / self.pixel_pitch_um
 
     def load(self):
-        print("Load images to merge...")
+        """
+        Reads disk at set path to load all png images except blacklisted names and put them in self.images list.
+        """
+        self.logger.info("Load images on disk...")
         # Empty image list if it already contained something
         self.images = []
         self.images_dtype = None
@@ -55,8 +60,9 @@ class ImageMerger:
                 coords = basename.strip(".png")  # filename without extension
                 i = int(coords.split('_')[0]) # order in wich img was taken
 
-                raw_x = float(coords.split("_")[2]) + float(self.margins_um[0])
-                raw_y = float(coords.split("_")[3]) + float(self.margins_um[1])
+                raw_x = float(coords.split("_")[2])# + float(self.margins_um[0])
+                raw_y = float(coords.split("_")[3])# + float(self.margins_um[1])
+                raw_z = float(coords.split("_")[4])
 
                 # Convert coordinate system to try to compensate
                 # rotation difference between camera and motor axis.
@@ -69,10 +75,10 @@ class ImageMerger:
                 self.images_res = [W, H]
 
                 if i >= len(self.images):
-                    self.images.append((x, y, image))
+                    self.images.append((x, y, raw_z, image))
                 else:
-                    self.images.insert(i, (x, y, image))
-        print("...Done.")
+                    self.images.insert(i, (x, y, raw_z, image))
+        self.logger.info("...Done.")
 
     def merge(
         self,
@@ -81,15 +87,15 @@ class ImageMerger:
         clean_after: bool = True
     ):
         if self.images_dtype is None:
-            print("Warning: Skipping image merging because no image was loaded.")
+            self.logger.warning("Skipping image merging because no image was loaded.")
         else:
             margin_x_um, margin_y_um = self.margins_um
             self.merge_img_size = [
-                int((self.X_END + 2 * margin_x_um) * self.pxl_per_um + self.images_res[0] + 100), # + 100 to try to avoid edge
-                int((self.Y_END + 2 * margin_y_um) * self.pxl_per_um + self.images_res[1] + 100), # cases because of motors precision.
+                int((self.X_END + 2 * margin_x_um) * self.pxl_per_um + self.images_res[0] + 1000), # + 100 to try to avoid edge
+                int((self.Y_END + 2 * margin_y_um) * self.pxl_per_um + self.images_res[1] + 1000), # cases because of motors precision.
             ]
 
-            print("Merge loaded images...")
+            self.logger.info("Merge loaded images...")
             full_img_W, full_img_H = self.merge_img_size[0], self.merge_img_size[1]
             img_W, img_H = self.images_res[0], self.images_res[1]
 
@@ -124,7 +130,7 @@ class ImageMerger:
             try:
                 vignette_corr_lut = np.loadtxt(f"x{self.lens}_vignette_lut.txt")
             except Exception as err:
-                print(f"Error: could not load vignette correction LUT: {err}")
+                self.logger.error(f"Could not load vignette correction LUT: {err}")
                 exit(-1)
             vignette_corr_lut = vignette_corr_lut.reshape((img_H-2, img_W-2))
 
@@ -132,11 +138,11 @@ class ImageMerger:
 
             # Merge overlaping images.
             index = 0
-            for x, y, image in self.images:
-                print(f"Merging img ({x}, {y})...")
+            for x, y, _, image in self.images:
+                self.logger.debug(f"Merging img ({x}, {y})...")
                 # coords are micrometers
-                x_px = int(np.round((x + margin_x_um) * self.pxl_per_um))
-                y_px = int(np.round((y + margin_y_um) * self.pxl_per_um))
+                x_px = int(np.round((x + margin_x_um) * self.pxl_per_um + 500))
+                y_px = int(np.round((y + margin_y_um) * self.pxl_per_um + 500))
 
                 # Apply vignette effect correction
                 image = image.astype(np.uint64)
@@ -156,8 +162,13 @@ class ImageMerger:
                     weight[1:img_H-1, 1:img_W-1].astype(np.uint64)
                 ) >> 8 # (// 255 because the weights are represented as uint8 (1.0 <=> 255))
 
-                full_image[y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += masked_image
-                weight_map[   y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += weight[1:img_H-1, 1:img_W-1]
+                try:
+                    full_image[y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += masked_image
+                    weight_map[   y_px+1:y_px+1+img_H-2, x_px+1:x_px+1+img_W-2] += weight[1:img_H-1, 1:img_W-1]
+                except Exception as err:
+                    self.logger.error(f"Tried to paste image on full image but some pixels were outside of it.\nError is: {err}.")
+                    self.logger.error("Likely due to camera/motor rotation axis mismatch correction. Increase size of full_image in merge function and increase offset to x_px and y_px.")
+                    exit(-1)
 
                 #index += 1
                 if index > 100:
@@ -197,7 +208,7 @@ class ImageMerger:
                     if basename not in self.ignore_filenames:
                         os.remove(filename)
 
-            print("...Done.")
+            self.logger.info("...Done.")
 
     def coords_motor2cam(self, x, y):
         """

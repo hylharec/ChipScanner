@@ -21,6 +21,14 @@ H, W = ref_img.shape
 ref_img = ref_img[1:H-1, 1:W-1]
 H, W = ref_img.shape
 
+# Apply Gaussian blur kernel
+kernel_gaussian = np.array([
+    [1, 2, 1],
+    [2, 4, 2],
+    [1, 2, 1],
+]) / 16
+ref_img = cv2.filter2D(ref_img, -1, kernel_gaussian)
+
 # Creation of the row and column intensity sums.
 # It shows how the grayscale intensity is distributed accross rows and columns.
 Y_rows = np.sum(ref_img, axis=1)
@@ -40,6 +48,14 @@ for col in range(W):
         a = (float(rows_mean) / float(np.maximum(1, Y_rows[row])))
         b = (float(cols_mean) / float(np.maximum(1, Y_cols[col])))
         lut[row, col] = a * b
+
+# Apply Gaussian blur kernel
+kernel_gaussian = np.array([
+    [1, 2, 1],
+    [2, 4, 2],
+    [1, 2, 1],
+]) / 16
+lut = cv2.filter2D(lut, -1, kernel_gaussian)
 
 # Show a heatmap of the LUT.
 plt.imshow(lut, cmap='hot', interpolation='nearest')

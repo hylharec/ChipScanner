@@ -3,12 +3,14 @@ import threading
 import cv2
 import numpy as np
 from pycromanager import Core
+import logging
 
 import CorvusDriver
 
 class Setup:
-    def __init__(self):
+    def __init__(self, logger: logging.Logger):
         # ########################################################################
+        self.logger = logger
         # Initialize connection with MM core server
         self._core = None
 
@@ -28,16 +30,16 @@ class Setup:
         """
 
         # ########################################################################
-        print("Connecting to MicroManager core server...")
+        self.logger.info("Connecting to MicroManager core server...")
         try:
             self._core: Core = Core()
         except Exception:
-            print("Could not connect to MicroManager core server, make sure it is running. Exit.\n\n")
+            self.logger.error("Could not connect to MicroManager core server, make sure it is running. Exit.\n\n")
             exit()
 
         # ########################################################################
         # Initialize connection with xyz controller
-        print("Connecting to XYZ instrument...")
+        self.logger.info("Connecting to XYZ instrument...")
         xyz_stage = CorvusDriver.SMCCorvusXYZ( # unit is um
             port="COM9",
             baud_rate=57600,
@@ -54,22 +56,22 @@ class Setup:
         # Disable auto-exposure on a spot of the chip were exposure is acceptable
         self._core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "On")
         xyz_stage.set_joystick(True)
-        print("Setting exposure: Please use the joystick to go to an area of the chip were the autoexposure will be set constant.")
+        self.logger.info("Setting exposure: Please use the joystick to go to an area of the chip were the autoexposure will be set constant.")
         input("\nThen press enter to continue...")
         self._core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "Off")
 
         # Set zero of XY stage on first corner of chip
-        print("Go to top left hand corner of chip with regards to the image viewed with the program.")
-        print("(Change z to set a good starting focus)")
-        print("Cross needs to be INSIDE chip corner or autofocus might take edges into account.")
+        self.logger.info("Go to top left hand corner of chip with regards to the image viewed with the program.")
+        self.logger.info("(Change z to set a good starting focus)")
+        self.logger.info("Cross needs to be INSIDE chip corner or autofocus might take edges into account.")
         input("\nThen press enter to continue...")
 
         xyz_stage.set_zero()
 
         # Define X_END and Y_END by selecting last corner of chip
-        print("Go to bottom right hand corner of chip with regards to the image viewed with the program.")
-        print("(Changing z is irrelevent for this step)")
-        print("Cross needs to be INSIDE chip corner or autofocus might take edges into account.")
+        self.logger.info("Go to bottom right hand corner of chip with regards to the image viewed with the program.")
+        self.logger.info("(Changing z is irrelevent for this step)")
+        self.logger.info("Cross needs to be INSIDE chip corner or autofocus might take edges into account.")
         input("\nThen press enter to continue...")
 
         pos = xyz_stage.get_pos(return_list=True)
@@ -128,10 +130,10 @@ class Setup:
                     pixels = cv2.line(pixels, (W//2, H//2 - 30), (W//2, H//2 + 30), (255, 0, 0), 5)
 
                     cv2.imshow("cv_win", pixels)
-                    cv2.waitKey(200)
+                    cv2.waitKey(50)
 
                 except Exception:
-                    print("Warning: Error while getting image from MM. Ignoring...")
+                    self.logger.warning("Error while getting image from MM. Ignoring...")
 
 
             # Handle thread stop command

@@ -3,8 +3,10 @@ from pycromanager import Core
 import cv2
 from time import sleep
 import yaml
+import logging
 
 import CorvusDriver
+import ImageMerger # only to load pictures for the "try to resume" sequence
 
 class ChipScanner:
     """
@@ -12,6 +14,7 @@ class ChipScanner:
     """
     def __init__(
         self,
+        logger: logging.Logger,
         camera_params_yaml_filename: str = "camera_parameters.yml",
         override_x_end_um: int = None, # None => do not override
         override_y_end_um: int = None, # None
@@ -20,11 +23,14 @@ class ChipScanner:
         Args:
             - camera_params_yaml_filename: (str) Name of YAML file where parameters are saved
         """
+        self.logger = logger
 
+        self.camera_params_yaml_filename = camera_params_yaml_filename
         with open(camera_params_yaml_filename, mode="r", encoding="utf-8") as f:
             yaml_dump: dict = yaml.safe_load(f)
 
             exp_key = "Experiment"
+            self.img_path_base =    yaml_dump[exp_key].get("img_path_base", "img_to_merge")
             self.X_END =            int(yaml_dump[exp_key].get("x_end_um", 0))
             self.Y_END =            int(yaml_dump[exp_key].get("y_end_um", 0))
             self.margins_um =       int(yaml_dump[exp_key].get("x_margin_um", 0)), int(yaml_dump[exp_key].get("y_margin_um", 0))
@@ -32,6 +38,7 @@ class ChipScanner:
             self.lens =             int(yaml_dump[exp_key].get("lens", 5))
             self.pixel_pitch =      float(yaml_dump[exp_key].get("pixel_pitch_um", 15.0))
             self.cam2motor_angle =  float(yaml_dump[exp_key].get("cam2motor_angle", 0.0))
+            self.try_to_resume = bool(yaml_dump["Experiment"].get("try_to_resume", True))
 
             input_key = "Input"
             self.camera_res = [
@@ -82,7 +89,7 @@ class ChipScanner:
 
         # ########################################################################
         # Initialize connection with MM core server
-        print("Connecting to MicroManager core server...")
+        self.logger.info("Connecting to MicroManager core server...")
         self.core = Core()
         self.core.set_property("Raptor Ninox Camera 640", "Exposure: Auto", "Off")
 
@@ -91,7 +98,7 @@ class ChipScanner:
 
         # ########################################################################
         # Initialize connection with xyz controller
-        print("Connecting to XYZ instrument...")
+        self.logger.info("Connecting to XYZ instrument...")
         self.xyz_stage = CorvusDriver.SMCCorvusXYZ( # unit is um
             port="COM9",
             baud_rate=57600,
@@ -142,69 +149,84 @@ class ChipScanner:
         # previous line rather than the current one as a starting point for autofocus.
         last_focus_z_on_same_y = {}
 
+        focus_z = 0.0
+
+        # Before starting the scan, try to resume where last experiment ended if option is enabled in yaml file.
+        # If last experiment was completed: will just skip scan.
+        resume_position_index = 0
+        if self.try_to_resume:
+            image_merger = ImageMerger.ImageMerger(self.camera_params_yaml_filename)
+            image_merger.load()
+            # the ImageMerger instance sorts the loaded images with growing index, the last value is the last image taken and it's index in the list corresponds to it's actual index.
+            resume_position_index = np.maximum(0, len(image_merger.images) - 1)
+            # Initial focus z depth is taken from last picture the program resumes from.
+            _, _, focus_z, _ = image_merger.images[-1] # (x, y, z, image)
+            try:
+                last_focus_z_on_same_y = np.loadtxt(self.img_path_base + "/last_focus_z_on_same_y_dict.txt")
+            except Exception as err:
+                self.logger.warning(f"Scan: Could not load last_focus_z_on_same_y dict from file -> {err}")
+                self.logger.warning("Resuming with empty last_focus_z_on_same_y.")
+
         # ########################################################################
         # Start exploring the chip and taking pictures
-        print("Scanning area...")
-        stop = 0
-        focus_z = 0.0
+        self.logger.info("Scanning area...")
         for i in range(len(self.positions)):
-            (x, y) = np.round(self.positions[i], 3)
-
-            # Printing scanning progress
-            progress = int(i * 50.0 / (len(self.positions) - 1)) # progress goes from 0 to 50
-            print(f"({round(x, 2)}, {round(y, 2)}) : \n" + progress * "#" + (50 - progress) * "-")
-
-            # Autofocus if enabled
-            if not self.enable_autof:
-                # Simply go to position (x, y), in um, focus_z is constant
-                self.xyz_stage.move_xyz_abs(x, y, focus_z)
-                sleep(0.2)
+            if i < resume_position_index:
+                self.logger.info(f"Resumed. Skipping {i}th position: {np.round(self.positions[i], 3)}")
             else:
-                # Get z value from which autofocus starts
-                # If not on first line, it is the average of the last value on same y and the previous value on same x
-                if str(y) in last_focus_z_on_same_y:
-                    focus_z = (last_focus_z_on_same_y[str(y)] + focus_z) / 2
+                (x, y) = np.round(self.positions[i], 3)
 
-                # Move to right xyz position before starting autofocus
-                self.xyz_stage.move_xyz_abs(x, y, focus_z)
-                sleep(0.2)
+                # Printing scanning progress
+                progress = int(i * 50.0 / (len(self.positions) - 1)) # progress goes from 0 to 50
+                self.logger.info(f"({round(x, 2)}, {round(y, 2)}) : \n" + progress * "#" + (50 - progress) * "-")
 
-                # Autofocus
-                focus_z = self.find_best_focus(
-                    self.autof_z_step_size_um,
-                    self.autof_max_tries,
-                    self.autof_min_step_size,
-                    self.autof_max_abs_z_um,
-                    self.min_rating_threshold,
-                    self.rough_scan_abs_z_um,
-                    self.rough_scan_nb,
-                )
-                print(f"Autofocus z = {focus_z}")
+                # Autofocus if disabled
+                if not self.enable_autof:
+                    # Simply go to position (x, y), in um, focus_z is constant
+                    self.xyz_stage.move_xyz_abs(x, y, focus_z)
+                    sleep(0.2)
+                else:
+                    # Get z value from which autofocus starts
+                    # If not on first line, it is the average of the last value on same y and the previous value on same x
+                    if str(y) in last_focus_z_on_same_y:
+                        focus_z = (last_focus_z_on_same_y[str(y)] + focus_z) / 2
 
-                # Update this line's last focus z value
-                last_focus_z_on_same_y[str(y)] = focus_z
+                    # Move to right xyz position before starting autofocus
+                    self.xyz_stage.move_xyz_abs(x, y, focus_z)
+                    sleep(0.2)
 
-            # Snap a picture
-            pixels = self._get_raw_camera_image()
+                    # Autofocus
+                    focus_z = self.find_best_focus(
+                        self.autof_z_step_size_um,
+                        self.autof_max_tries,
+                        self.autof_min_step_size,
+                        self.autof_max_abs_z_um,
+                        self.min_rating_threshold,
+                        self.rough_scan_abs_z_um,
+                        self.rough_scan_nb,
+                    )
+                    self.logger.debug(f"Autofocus z = {focus_z}")
 
-            # Get real position
-            pos = np.round(self.xyz_stage.get_pos(True), 3)
-            #print(f"({x_m}, {y_m}) => ({pos[0]}, {pos[1]})")
-            x, y = pos[0], pos[1]
+                    # Update this line's last focus z value
+                    last_focus_z_on_same_y[str(y)] = focus_z
+                    np.savetxt(self.img_path_base + "/last_focus_z_on_same_y_dict.txt", last_focus_z_on_same_y)
 
-            # ================= WORKS ? Was after imwrite
-            # Apply values scalar multiplication in case bit depth is not a multiple of 2
-            pixels = pixels * self._INPUT_TO_OUTPUT_BIT_DEPTH_MULT
+                # Snap a picture
+                pixels = self._get_raw_camera_image()
 
-            #cv2.imwrite(f"img_to_merge/{i}_{len(self.positions)}_{x}_{y}.png", cv2.cvtColor(pixels, cv2.COLOR_GRAY2BGR))
-            cv2.imwrite(f"img_to_merge/{i}_{len(self.positions)}_{x}_{y}.png", pixels)
+                # Get real position
+                pos = np.round(self.xyz_stage.get_pos(True), 3)
+                #self.logger.info(f"({x_m}, {y_m}) => ({pos[0]}, {pos[1]})")
+                x, y, z = pos[0], pos[1], pos[2]
 
-            #stop += 1
-            if stop >= 10:
-                break
+                # ================= WORKS ? Was after imwrite
+                # Apply values scalar multiplication in case bit depth is not a multiple of 2
+                pixels = pixels * self._INPUT_TO_OUTPUT_BIT_DEPTH_MULT
+
+                cv2.imwrite(f"img_to_merge/{i}_{len(self.positions)}_{x}_{y}_{z}.png", pixels)
         # ########################################################################
 
-        print("Done.")
+        self.logger.info("Done.")
         # Re-enable joystick before quitting
         self.xyz_stage.set_joystick(False)
 
@@ -242,7 +264,7 @@ class ChipScanner:
         # Before convergence algorithm starts, do a rough exploration around current z depth
         best_rough_z = current_z
         best_rough_score = self._get_image_focus_score(self._get_raw_camera_image(), x, y)
-        for z in range(np.linspace(current_z - rough_scan_abs_z_um, current_z + rough_scan_abs_z_um, rough_scan_nb)):
+        for z in np.linspace(current_z - rough_scan_abs_z_um, current_z + rough_scan_abs_z_um, rough_scan_nb):
             self.xyz_stage.move_xyz_abs(x, y, z)
             score = self._get_image_focus_score(self._get_raw_camera_image(), x, y)
 
@@ -263,7 +285,7 @@ class ChipScanner:
 
             # Compute the focus rating for the current position
             score = self._get_image_focus_score(self._get_raw_camera_image(), x, y)
-            #print(f"Z: {current_z}, Score: {score}, dir: {direction}, step: {z_step_size_um}")
+            #self.logger.info(f"Z: {current_z}, Score: {score}, dir: {direction}, step: {z_step_size_um}")
 
             # -1 should indicate that microscope is currently not over chip area (irrelevent to focus)
             if score == -1:
@@ -291,6 +313,7 @@ class ChipScanner:
                             # Revert to initial z if best rating below threshold
                             if best_score < min_rating_threshold:
                                 best_z = initial_z
+                                self.logger.warning(f"Ignoring autofocus: best rating was too low. {best_score} < {min_rating_threshold}")
                             self.xyz_stage.move_xyz_abs(x, y, initial_z)
                             return initial_z
                         else:
@@ -318,6 +341,7 @@ class ChipScanner:
         # Revert to initial z if best rating below threshold
         if best_score < self.min_rating_threshold:
             best_z = initial_z
+            self.logger.warning(f"Ignoring autofocus: best rating was too low. {best_score} < {min_rating_threshold}")
         self.xyz_stage.move_xyz_abs(x, y, best_z)
         return best_z
 
@@ -375,24 +399,40 @@ class ChipScanner:
         low_x_limit = int(- x_coord * self.PXL_PER_UM + W//2)
         high_x_limit = int((self.X_END - x_coord) * self.PXL_PER_UM + W//2)
 
-        #print(f"{low_y_limit}, {high_y_limit}, {low_x_limit}, {high_x_limit}")
+        #self.logger.debug(f"{low_y_limit}, {high_y_limit}, {low_x_limit}, {high_x_limit}")
+
+        # This array is used to compute the ratio of pixels that are not outside of the
+        # chip's area with regards to the total number of pixels. It is used to prevent
+        # pictures on the rims of the chip to have a lower rating.
+        useful_area = np.ones(edges.shape)
 
         if low_y_limit >= 0 and low_y_limit < H:
             edges[:low_y_limit] *= 0
+            useful_area[:low_y_limit] *= 0
         if high_y_limit >= 0 and high_y_limit < H:
             edges[high_y_limit:] *= 0
+            useful_area[high_y_limit:] *= 0
         edges = np.transpose(edges)
+        useful_area = np.transpose(useful_area)
         if low_x_limit >= 0 and low_x_limit < W:
             edges[:low_x_limit] *= 0
+            useful_area[:low_x_limit] *= 0
         if high_x_limit >= 0 and high_x_limit < W:
             edges[high_x_limit:] *= 0
+            useful_area[high_x_limit:] *= 0
         edges = np.transpose(edges)
+        useful_area = np.transpose(useful_area)
 
-        cv2.imshow(f"edges", cv2.addWeighted(image, 0.3, edges, 0.7, 0.0))
+        useful_area_H, useful_area_W = useful_area.shape
+        useful_pixels_ratio = useful_area.sum() / (useful_area_H * useful_area_W)
+
+        cv2.imshow(f"edges", cv2.addWeighted(image, 0.3, edges * 4, 0.7, 0.0))
         cv2.waitKey(10)
 
         # Score is defined as average value of edge image
-        return edges.mean()
+        rating = edges.mean() * useful_pixels_ratio
+        self.logger.info(f"Rating: {rating}")
+        return rating
 
     def _get_raw_camera_image(self):
         self.core.snap_image()

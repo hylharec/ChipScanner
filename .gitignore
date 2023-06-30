@@ -2,3 +2,5 @@
 img_to_merge/*.png
 Archive/
 __pycache__/
+*.zip
+*.log

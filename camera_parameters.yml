@@ -24,6 +24,8 @@ Input:
 # The end x and y values should correspond to the middle of the opposite corner.
 #
 Experiment:
+    img_path_base: "img_to_merge"
+
     x_end_um: 3473              # (int) Coordinates where the end corner of chip is in the middle of the camera
     y_end_um: 3593              #
 
@@ -34,8 +36,9 @@ Experiment:
     lens: 20                    # (5, 20 or 50) Magnification used
     pixel_pitch_um: 15.0        # (float) See camera datasheet
     cam2motor_angle: 0.01       # (float) (rad) Rotational misalignment between camera and XY stage
-    only_merge: True            # (bool) Set to True to prevent new pictures to be taken and directly jump to the merging process when launching main.py
+    only_merge: False            # (bool) Set to True to prevent new pictures to be taken and directly jump to the merging process when launching main.py
     skip_setup: True            # (bool) Set to True to prevent manual runtime exposure, zero pos and end pos setting sequence in main.py
+    try_to_resume: False         # (bool) When True, scan function will first look at saved images to get the index of the last taken picture. Warning: program should throw an error if skip_setup is False when this option is enabled.
 
 # Autofocus params depend on the lens used.
 # Usually:
